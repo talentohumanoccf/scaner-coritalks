@@ -71,9 +71,27 @@
         document.addEventListener('DOMContentLoaded', () => {
             lucide.createIcons();
 
-            // === REEMPLAZA ESTA URL CON TU SCRIPT DE GOOGLE SI CAMBIA ===
             const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzEZQNsgh8-0d8UUlRFQL2EDZudUi1inPz6kv3JOokjacyMNT-OAvl5H1Up2Jnh4QYMGw/exec";
             
+            let guestList = [];
+            let isProcessing = false;
+
+            // 1. CARGA INICIAL: Descargar la lista de invitados para que todo sea instantáneo después
+            function loadGuests() {
+                showStatus('loader-2', 'Iniciando...', 'Sincronizando lista de invitados...', 'text-brand-cyan', 'bg-brand-cyan/10', true);
+                
+                fetch(`${SCRIPT_URL}?action=getGuests`)
+                    .then(response => response.json())
+                    .then(data => {
+                        guestList = data;
+                        showStatus('camera', 'Sistema Listo', `Cargados ${guestList.length} invitados. Ya puedes escanear.`, 'text-brand-cyan', 'bg-brand-cyan/10', false);
+                        setTimeout(resetScanner, 2000);
+                    })
+                    .catch(err => {
+                        showStatus('wifi-off', 'Error de Carga', 'No se pudo obtener la lista. Revisa tu conexión.', 'text-red-400', 'bg-red-500/10', false);
+                    });
+            }
+
             const html5QrcodeScanner = new Html5QrcodeScanner(
                 "reader",
                 { 
@@ -88,44 +106,33 @@
             const statusTitle = document.getElementById('status-title');
             const statusMessage = document.getElementById('status-message');
             const restartBtn = document.getElementById('restart-btn');
-            
-            let isProcessing = false;
 
-            function onScanSuccess(decodedText, decodedResult) {
-                if(isProcessing) return; // Prevenir múltiples llamadas por un mismo escaneo
+            function onScanSuccess(decodedText) {
+                if(isProcessing) return;
                 isProcessing = true;
-                
-                // Congelar la cámara mientras carga
                 html5QrcodeScanner.pause();
-                
-                showStatus('loader-2', 'Verificando...', 'Consultando lista de invitados...', 'text-brand-cyan', 'bg-brand-cyan/10', true);
 
-                // Llamar a Google Apps Script
-                fetch(`${SCRIPT_URL}?action=checkin&doc=${encodeURIComponent(decodedText)}`)
-                    .then(response => response.json())
-                    .then(data => {
-                        if (data.status === 'success') {
-                            showStatus('check-circle', '¡Acceso Permitido!', `Bienvenido(a), ${data.name}`, 'text-green-400', 'bg-green-500/10', false);
-                            
-                            // Auto-reiniciar después de 2.5 segundos si fue un éxito para ir rápido
-                            setTimeout(resetScanner, 2500);
-                        } else if (data.status === 'already_checked') {
-                            showStatus('alert-circle', 'Ya Ingresó', `El código de ${data.name} ya fue escaneado antes.`, 'text-yellow-400', 'bg-yellow-500/10', false);
-                            restartBtn.classList.remove('hidden');
-                        } else {
-                            showStatus('x-circle', 'No Registrado', 'El documento escaneado no está en la lista de invitados.', 'text-red-400', 'bg-red-500/10', false);
-                            restartBtn.classList.remove('hidden');
-                        }
-                    })
-                    .catch(error => {
-                        showStatus('wifi-off', 'Error de Red', 'Problema al conectar con la base de datos.', 'text-red-400', 'bg-red-500/10', false);
-                        restartBtn.classList.remove('hidden');
-                        console.error(error);
-                    });
-            }
+                // 2. VALIDACIÓN LOCAL (INSTANTÁNEA)
+                const guest = guestList.find(g => g.doc === decodedText);
 
-            function onScanFailure(error) {
-                // Ignoramos errores de fondo que lanza la librería mientras busca el QR
+                if (!guest) {
+                    showStatus('x-circle', 'No Registrado', `El documento ${decodedText} no está en la lista.`, 'text-red-400', 'bg-red-500/10', false);
+                    restartBtn.classList.remove('hidden');
+                } else if (guest.status === 'Presente') {
+                    showStatus('alert-circle', 'Ya Ingresó', `El código de ${guest.name} ya fue escaneado antes.`, 'text-yellow-400', 'bg-yellow-500/10', false);
+                    restartBtn.classList.remove('hidden');
+                } else {
+                    // 3. ÉXITO INSTANTÁNEO
+                    guest.status = 'Presente'; // Marcar localmente para evitar duplicados
+                    showStatus('check-circle', '¡Acceso Permitido!', `Bienvenido(a), ${guest.name}`, 'text-green-400', 'bg-green-500/10', false);
+                    
+                    // 4. SINCRONIZACIÓN EN SEGUNDO PLANO (El usuario no espera a esto)
+                    fetch(`${SCRIPT_URL}?action=checkin&doc=${encodeURIComponent(decodedText)}`)
+                        .then(() => console.log('Sincronizado con éxito'))
+                        .catch(err => console.error('Error de sincronización:', err));
+
+                    setTimeout(resetScanner, 2000);
+                }
             }
 
             function showStatus(iconName, title, message, textColorClass, bgColorClass, isSpinning) {
@@ -133,13 +140,9 @@
                 statusContainer.classList.remove('hidden');
                 statusTitle.textContent = title;
                 statusMessage.textContent = message;
-                
                 statusIcon.setAttribute('data-lucide', iconName);
-                if(isSpinning) {
-                    statusIcon.classList.add('animate-spin');
-                } else {
-                    statusIcon.classList.remove('animate-spin');
-                }
+                if(isSpinning) statusIcon.classList.add('animate-spin');
+                else statusIcon.classList.remove('animate-spin');
                 lucide.createIcons();
             }
 
@@ -151,9 +154,10 @@
             }
 
             restartBtn.addEventListener('click', resetScanner);
-            
-            // Iniciar escáner
-            html5QrcodeScanner.render(onScanSuccess, onScanFailure);
+            html5QrcodeScanner.render(onScanSuccess);
+
+            // Iniciar carga de datos
+            loadGuests();
         });
     </script>
 </body>
