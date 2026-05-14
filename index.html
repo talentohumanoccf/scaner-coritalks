@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Scanner de Acceso | CoriTalks</title>
+    
+    <!-- Icons & Fonts -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;800&display=swap" rel="stylesheet">
+    
+    <!-- Tailwind -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'brand-cyan': '#00A3E0',
+                        'navy': '#010816',
+                        'light-navy': '#0a192f',
+                    },
+                    fontFamily: {
+                        'poppins': ['Poppins', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+
+    <!-- QR Scanner Library -->
+    <script src="https://unpkg.com/html5-qrcode"></script>
+
+    <style>
+        body { font-family: 'Poppins', sans-serif; background-color: #010816; color: white; }
+        /* Sobrescribir estilos de la librería de QR */
+        #reader { width: 100%; border-radius: 1rem; overflow: hidden; border: 2px solid #00A3E0; background: black; }
+        #reader video { object-fit: cover; }
+        #reader__dashboard_section_csr button { background: #00A3E0 !important; color: #010816 !important; font-weight: bold; padding: 5px 10px; border-radius: 5px; margin-top: 10px;}
+    </style>
+</head>
+<body class="min-h-screen flex flex-col items-center justify-center p-4">
+
+    <div class="w-full max-w-md bg-light-navy rounded-[2rem] shadow-2xl border border-brand-cyan/20 p-6 flex flex-col items-center">
+        
+        <!-- Header -->
+        <div class="text-center mb-6">
+            <h1 class="text-2xl font-black text-white tracking-wide">Cori<span class="text-brand-cyan">Talks</span></h1>
+            <div class="inline-block bg-brand-cyan/10 border border-brand-cyan/20 px-3 py-1 rounded-full mt-1">
+                <p class="text-xs font-bold text-brand-cyan uppercase tracking-widest">Punto de Control</p>
+            </div>
+        </div>
+
+        <!-- Camera Container -->
+        <div id="reader" class="mb-6 shadow-[0_0_20px_rgba(0,163,224,0.15)]"></div>
+
+        <!-- Status Container -->
+        <div id="status-container" class="w-full text-center p-6 rounded-2xl hidden transition-all duration-300">
+            <i id="status-icon" data-lucide="" class="w-16 h-16 mx-auto mb-3"></i>
+            <h2 id="status-title" class="text-2xl font-bold mb-1"></h2>
+            <p id="status-message" class="text-sm opacity-90"></p>
+        </div>
+
+        <!-- Action Button -->
+        <button id="restart-btn" class="mt-4 px-6 py-3 bg-brand-cyan text-navy font-bold rounded-xl hidden w-full hover:bg-white transition-colors">
+            Escanear Siguiente Asistente
+        </button>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            lucide.createIcons();
+
+            // === REEMPLAZA ESTA URL CON TU SCRIPT DE GOOGLE SI CAMBIA ===
+            const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzEZQNsgh8-0d8UUlRFQL2EDZudUi1inPz6kv3JOokjacyMNT-OAvl5H1Up2Jnh4QYMGw/exec";
+            
+            const html5QrcodeScanner = new Html5QrcodeScanner(
+                "reader",
+                { fps: 10, qrbox: {width: 250, height: 250} },
+                /* verbose= */ false);
+
+            const statusContainer = document.getElementById('status-container');
+            const statusIcon = document.getElementById('status-icon');
+            const statusTitle = document.getElementById('status-title');
+            const statusMessage = document.getElementById('status-message');
+            const restartBtn = document.getElementById('restart-btn');
+            
+            let isProcessing = false;
+
+            function onScanSuccess(decodedText, decodedResult) {
+                if(isProcessing) return; // Prevenir múltiples llamadas por un mismo escaneo
+                isProcessing = true;
+                
+                // Congelar la cámara mientras carga
+                html5QrcodeScanner.pause();
+                
+                showStatus('loader-2', 'Verificando...', 'Consultando lista de invitados...', 'text-brand-cyan', 'bg-brand-cyan/10', true);
+
+                // Llamar a Google Apps Script
+                fetch(`${SCRIPT_URL}?action=checkin&doc=${encodeURIComponent(decodedText)}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.status === 'success') {
+                            showStatus('check-circle', '¡Acceso Permitido!', `Bienvenido(a), ${data.name}`, 'text-green-400', 'bg-green-500/10', false);
+                            
+                            // Auto-reiniciar después de 2.5 segundos si fue un éxito para ir rápido
+                            setTimeout(resetScanner, 2500);
+                        } else if (data.status === 'already_checked') {
+                            showStatus('alert-circle', 'Ya Ingresó', `El código de ${data.name} ya fue escaneado antes.`, 'text-yellow-400', 'bg-yellow-500/10', false);
+                            restartBtn.classList.remove('hidden');
+                        } else {
+                            showStatus('x-circle', 'No Registrado', 'El documento escaneado no está en la lista de invitados.', 'text-red-400', 'bg-red-500/10', false);
+                            restartBtn.classList.remove('hidden');
+                        }
+                    })
+                    .catch(error => {
+                        showStatus('wifi-off', 'Error de Red', 'Problema al conectar con la base de datos.', 'text-red-400', 'bg-red-500/10', false);
+                        restartBtn.classList.remove('hidden');
+                        console.error(error);
+                    });
+            }
+
+            function onScanFailure(error) {
+                // Ignoramos errores de fondo que lanza la librería mientras busca el QR
+            }
+
+            function showStatus(iconName, title, message, textColorClass, bgColorClass, isSpinning) {
+                statusContainer.className = `w-full text-center p-6 rounded-2xl ${bgColorClass} ${textColorClass}`;
+                statusContainer.classList.remove('hidden');
+                statusTitle.textContent = title;
+                statusMessage.textContent = message;
+                
+                statusIcon.setAttribute('data-lucide', iconName);
+                if(isSpinning) {
+                    statusIcon.classList.add('animate-spin');
+                } else {
+                    statusIcon.classList.remove('animate-spin');
+                }
+                lucide.createIcons();
+            }
+
+            function resetScanner() {
+                statusContainer.classList.add('hidden');
+                restartBtn.classList.add('hidden');
+                isProcessing = false;
+                html5QrcodeScanner.resume();
+            }
+
+            restartBtn.addEventListener('click', resetScanner);
+            
+            // Iniciar escáner
+            html5QrcodeScanner.render(onScanSuccess, onScanFailure);
+        });
+    </script>
+</body>
+</html>
